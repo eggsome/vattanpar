@@ -1,4 +1,12 @@
-# crateblast map (written by editor.py)
+# crateblast map — units are world pixels, origin top-left
+#   size    <w> <h>
+#   spawn   <x> <y>
+#   wall    <low|medium|high> <x> <y> <w> <h>
+#   terrain <grass|sand|water|ice> <x> <y> <w> <h>
+#   poly    <low|medium|high|grass|sand|water|ice> <x1> <y1> <x2> <y2> ...
+#   crate   <x> <y>
+# Jump (SPACE) climbs one height step: ground -> low -> medium -> high.
+
 size 5760 3240
 spawn 1760 1740
 
@@ -8,22 +16,31 @@ terrain water 500 2200 900 700
 terrain water 5000 2500 600 580
 terrain ice 2300 2500 1000 640
 poly ice 2160 1020 2580 1460 2420 2120 2060 2080 2180 1320
-wall 0 0 5760 40
-wall 0 3200 5760 40
-wall 0 40 40 3160
-wall 5720 40 40 3160
-wall 1000 700 60 1100
-wall 1000 700 700 60
-wall 2500 400 60 900
-wall 2500 1240 800 60
-wall 4200 700 1000 60
-wall 4600 760 60 700
-wall 1500 2400 1100 60
-wall 3400 1900 60 1000
-wall 4000 2500 900 60
-wall 2000 1700 400 60
-poly wall 3500 1450 3800 1750 3720 1830 3420 1530
-poly wall 2960 2180 2940 2360 3260 2460 3160 2340 3000 2320
+
+# border
+wall high 0 0 5760 40
+wall high 0 3200 5760 40
+wall high 0 40 40 3160
+wall high 5720 40 40 3160
+
+# interior
+wall high 1000 700 60 1100
+wall high 1000 700 700 60
+wall medium 2500 400 60 900
+wall medium 2500 1240 800 60
+wall high 4200 700 1000 60
+wall medium 4600 760 60 700
+wall medium 1500 2400 1100 60
+wall high 3400 1900 60 1000
+wall low 4000 2500 900 60
+wall low 2000 1700 400 60
+poly medium 3500 1450 3800 1750 3720 1830 3420 1530
+poly low 2960 2180 2940 2360 3260 2460 3160 2340 3000 2320
+
+# staircase: hop low -> medium -> high, then walk the high wall south
+wall low 2700 1850 300 300
+wall medium 3000 1850 300 300
+wall high 3300 1850 300 300
 
 crate 2600 1780
 crate 2740 1900

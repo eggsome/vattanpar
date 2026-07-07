@@ -7,12 +7,12 @@
 
 #define MAX_WALLS 256
 #define MAX_TERRAIN 128
-#define MAX_CRATES 128
+#define MAX_BARRELS 128
 #define MAX_BULLETS 128
 #define MAX_FRAGMENTS 512
 
-#define PLAYER_SIZE 36.0f
-#define CRATE_SIZE 44.0f
+#define PLAYER_R 18.0f
+#define BARREL_R 21.0f
 
 typedef struct { float x, y, w, h; } Rect;
 
@@ -24,6 +24,11 @@ typedef struct {
     float minx, miny, maxx, maxy; /* bbox, computed at load */
 } Poly;
 
+/* wall height levels; ground is level 0 */
+enum { LEVEL_GROUND = 0, LEVEL_LOW = 1, LEVEL_MEDIUM = 2, LEVEL_HIGH = 3 };
+
+typedef struct { int level; Poly p; } Wall;
+
 typedef enum {
     TERRAIN_GRASS,
     TERRAIN_SAND,
@@ -34,28 +39,32 @@ typedef enum {
 
 typedef struct { TerrainType type; Poly p; } TerrainPatch;
 
-typedef struct { Rect r; float vx, vy; int hp; bool alive; } Crate;
+typedef struct { float x, y, vx, vy; int hp, level; bool alive; } Barrel;
 
-typedef struct { float x, y, vx, vy, ttl; bool alive; } Bullet;
+typedef struct { float x, y, vx, vy, ttl; int level; bool alive; } Bullet;
 
-typedef struct { Rect r; float vx, vy, ttl; uint32_t color; bool alive; } Fragment;
+typedef struct {
+    Rect r; float vx, vy, ttl; int level; uint32_t color; bool alive;
+} Fragment;
 
 typedef struct {
     /* map */
     float map_w, map_h;
-    Poly walls[MAX_WALLS];
+    Wall walls[MAX_WALLS];
     int nwalls;
     TerrainPatch terrain[MAX_TERRAIN];
     int nterrain;
 
     /* entities */
-    Crate crates[MAX_CRATES];
-    int ncrates;
+    Barrel barrels[MAX_BARRELS];
+    int nbarrels;
     Bullet bullets[MAX_BULLETS];
     Fragment frags[MAX_FRAGMENTS];
 
-    /* player (center position) */
+    /* player (center position; pz is height above the current floor) */
     float px, py, pvx, pvy;
+    float pz, pvz;
+    int plevel;              /* floor level; frozen while airborne */
     float aim_x, aim_y;      /* unit vector toward cursor */
     float fire_cooldown;
 
@@ -63,7 +72,8 @@ typedef struct {
     float cam_x, cam_y;
 
     /* input, written by the wayland layer */
-    bool key_w, key_a, key_s, key_d;
+    bool key_w, key_a, key_s, key_d, key_space;
+    bool space_latch;        /* jump is edge-triggered */
     bool mouse_down;
     float cursor_x, cursor_y; /* surface-local pixels */
 

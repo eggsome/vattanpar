@@ -90,6 +90,7 @@ static void kb_leave(void *d, struct wl_keyboard *k, uint32_t serial,
 {
     (void)d; (void)k; (void)serial; (void)s;
     game.key_w = game.key_a = game.key_s = game.key_d = false;
+    game.key_space = false;
 }
 
 static void kb_key(void *d, struct wl_keyboard *k, uint32_t serial,
@@ -102,6 +103,7 @@ static void kb_key(void *d, struct wl_keyboard *k, uint32_t serial,
     case KEY_A: game.key_a = down; break;
     case KEY_S: game.key_s = down; break;
     case KEY_D: game.key_d = down; break;
+    case KEY_SPACE: game.key_space = down; break;
     case KEY_ESC: if (down) running = false; break;
     }
 }
