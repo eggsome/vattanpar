@@ -8,6 +8,7 @@
 #include <wayland-client.h>
 #include "xdg-shell-client-protocol.h"
 #include "game.h"
+#include "sound.h"
 
 struct buffer {
     struct wl_buffer *wl;
@@ -280,6 +281,8 @@ static void frame_done(void *d, struct wl_callback *cb, uint32_t time)
     last_frame_time = time;
     if (dt > 0.05f) dt = 0.05f;
     game_update(&game, dt);
+    if (game.ev_jump) { game.ev_jump = false; sound_play(SND_JUMP); }
+    if (game.ev_fall) { game.ev_fall = false; sound_play(SND_FALL); }
     redraw();
 }
 
@@ -311,6 +314,7 @@ int main(int argc, char **argv)
     const char *map_path = argc > 1 ? argv[1] : "map.txt";
     if (!game_load_map(&game, map_path))
         return 1;
+    sound_init(); /* on failure the game just runs silently */
 
     display = wl_display_connect(NULL);
     if (!display) {
@@ -346,6 +350,7 @@ int main(int argc, char **argv)
     while (running && wl_display_dispatch(display) != -1)
         ;
 
+    sound_shutdown();
     xdg_toplevel_destroy(toplevel);
     xdg_surface_destroy(xsurface);
     wl_surface_destroy(surface);

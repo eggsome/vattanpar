@@ -26,6 +26,7 @@ typedef struct {
 
 /* wall height levels; ground is level 0 */
 enum { LEVEL_GROUND = 0, LEVEL_LOW = 1, LEVEL_MEDIUM = 2, LEVEL_HIGH = 3 };
+#define LEVEL_STEP 70.0f /* world px of height per level */
 
 typedef struct { int level; Poly p; } Wall;
 
@@ -61,10 +62,15 @@ typedef struct {
     Bullet bullets[MAX_BULLETS];
     Fragment frags[MAX_FRAGMENTS];
 
-    /* player (center position; pz is height above the current floor) */
+    /* player (center position; pz is absolute height above ground plane) */
     float px, py, pvx, pvy;
     float pz, pvz;
-    int plevel;              /* floor level; frozen while airborne */
+    float pfloor;            /* floor height under the center (for render) */
+    bool airborne;
+    int plevel;              /* standing level; takeoff level while airborne */
+    int fall_from;           /* level when the player left the ground */
+    bool fall_jumped;        /* airborne via jump (adds one to fall height) */
+    bool ev_jump, ev_fall;   /* one-shot events consumed by the audio layer */
     float aim_x, aim_y;      /* unit vector toward cursor */
     float fire_cooldown;
 

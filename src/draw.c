@@ -258,14 +258,15 @@ void game_render(const Game *g, uint32_t *pix)
                     3, COL_BULLET);
     }
 
-    /* player: shadow at ground position, body lifted while jumping */
+    /* player: shadow at ground position, body lifted while in the air */
     {
         int cx = (int)(g->px - g->cam_x), cy = (int)(g->py - g->cam_y);
-        if (g->pz > 0.5f) {
-            int sr = 12 - (int)(g->pz * 0.06f);
+        float lift = g->pz - g->pfloor; /* height above what's below us */
+        if (lift > 0.5f) {
+            int sr = 12 - (int)(lift * 0.06f);
             fill_circle(pix, cx, cy, sr < 5 ? 5 : sr, COL_SHADOW);
         }
-        int by = cy - (int)g->pz;
+        int by = cy - (int)lift;
         for (float t = 8; t <= 30; t += 2)
             fill_circle(pix, cx + (int)(g->aim_x * t),
                         by + (int)(g->aim_y * t), 4, COL_GUN);

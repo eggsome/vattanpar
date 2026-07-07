@@ -2,7 +2,7 @@
 
 Top-down 2D shooter for Linux/Wayland. No engine, no toolkit, no sprites —
 a raw `wayland-client` connection, software rendering into shared-memory
-buffers, and vector shapes all the way down.
+buffers, vector shapes all the way down, and a tiny ALSA mixer for sound.
 
 Drive around a 5760x3240 map (3x a 1080p screen in each axis) and blast
 barrels. Barrels take three hits, get knocked around by bullets and by you,
@@ -23,14 +23,28 @@ top-right.
 
 Walls come in three heights — **low**, **medium**, **high** — drawn lighter
 the taller they are. Jumping (SPACE) lets you climb exactly one step:
-ground → low → medium → high. Anything more than one step above you stays
-solid even mid-jump. You can jump down any distance, but walking off an
-edge is not possible — changing height always takes a jump. While airborne
-a small black shadow circle marks your position on the ground and shrinks
-the higher you are.
+ground → low → medium → high. The jump arc tops out below a two-step wall
+face, so jump close to the wall you want to climb; jump too early and you
+smack the face and slide back down. Walking off any edge simply drops you
+onto whatever is below. While airborne a small black shadow circle marks
+your position on the ground and shrinks the higher you are.
+
+Running into a wall at an angle slides you along it — the closer to
+face-on you hit, the more speed you lose.
 
 Bullets fly at the height you fired from and pass over lower walls, so the
 high ground is worth taking.
+
+## Sound
+
+`assets/jump.wav` plays on every jump; `assets/fall.wav` plays when you
+drop more than one height level (a jump adds one level to the fall, so
+jumping off a low wall counts as two). The files are 48 kHz 16-bit mono
+PCM, regenerable with `python3 tools/gen_sounds.py` — replace them with
+your own if you like. Playback goes through `libasound.so.2`, loaded with
+`dlopen` at runtime (no ALSA dev package needed to build; on PipeWire or
+PulseAudio desktops the default device routes through them). If the
+library or the files are missing the game runs silently.
 
 ## Terrain
 

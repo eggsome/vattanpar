@@ -5,10 +5,11 @@ WL_LIBS   := $(shell pkg-config --libs wayland-client)
 PROTO_DIR := $(shell pkg-config --variable=pkgdatadir wayland-protocols)
 XDG_XML   := $(PROTO_DIR)/stable/xdg-shell/xdg-shell.xml
 
-OBJ := build/main.o build/game.o build/draw.o build/xdg-shell-protocol.o
+OBJ := build/main.o build/game.o build/draw.o build/sound.o \
+       build/xdg-shell-protocol.o
 
 crateblast: $(OBJ)
-	$(CC) -o $@ $(OBJ) $(WL_LIBS) -lm
+	$(CC) -o $@ $(OBJ) $(WL_LIBS) -lm -ldl -pthread
 
 build/xdg-shell-client-protocol.h: $(XDG_XML) | build
 	wayland-scanner client-header $< $@
