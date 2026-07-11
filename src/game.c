@@ -337,7 +337,8 @@ bool game_load_map(Game *g, const char *path)
         } else if (sscanf(line, "crate %f %f", &x, &y) == 2 ||
                    sscanf(line, "barrel %f %f", &x, &y) == 2) {
             if (g->nbarrels < MAX_BARRELS)
-                g->barrels[g->nbarrels++] = (Barrel){x, y, 0, 0, 3, 0, true};
+                g->barrels[g->nbarrels++] =
+                    (Barrel){x, y, 0, 0, 0, 0, 3, 0, true};
         } else {
             fprintf(stderr, "crateblast: %s:%d: skipping unrecognized line\n",
                     path, lineno);
@@ -348,8 +349,11 @@ bool game_load_map(Game *g, const char *path)
     /* everything rests on whatever the map put underneath it */
     g->plevel = level_at(g, g->px, g->py);
     g->pz = g->pfloor = g->plevel * LEVEL_STEP;
-    for (int i = 0; i < g->nbarrels; i++)
-        g->barrels[i].level = level_at(g, g->barrels[i].x, g->barrels[i].y);
+    for (int i = 0; i < g->nbarrels; i++) {
+        Barrel *b = &g->barrels[i];
+        b->level = level_at(g, b->x, b->y);
+        b->z = b->level * LEVEL_STEP;
+    }
 
     g->cam_x = g->px - SCREEN_W / 2.0f;
     g->cam_y = g->py - SCREEN_H / 2.0f;
@@ -617,6 +621,14 @@ static void update_barrels(Game *g, float dt)
         int lvl = level_at(g, b->x, b->y);
         if (lvl < b->level)
             b->level = lvl; /* rolled off an edge */
+        float floorz = b->level * LEVEL_STEP;
+        if (b->z > floorz) { /* visual drop after rolling off */
+            b->vz -= GRAVITY * dt;
+            b->z += b->vz * dt;
+            if (b->z <= floorz) { b->z = floorz; b->vz = 0; }
+        } else {
+            b->z = floorz;
+        }
     }
 
     /* barrel vs barrel (same floor only): push apart, trade velocity */

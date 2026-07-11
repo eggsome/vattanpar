@@ -40,7 +40,12 @@ typedef enum {
 
 typedef struct { TerrainType type; Poly p; } TerrainPatch;
 
-typedef struct { float x, y, vx, vy; int hp, level; bool alive; } Barrel;
+/* z/vz are visual-only: barrels animate falling when their level drops */
+typedef struct {
+    float x, y, vx, vy, z, vz;
+    int hp, level;
+    bool alive;
+} Barrel;
 
 typedef struct { float x, y, vx, vy, ttl; int level; bool alive; } Bullet;
 

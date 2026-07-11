@@ -1,17 +1,33 @@
 #include "game.h"
 #include <math.h>
 #include <stddef.h>
+#include <stdlib.h>
+
+/* 2.5D oblique projection: a point at height z draws at screen y - z.
+ * Walls are extruded volumes (south faces visible), the player and
+ * barrels are cylinders, and everything is painter-sorted by its ground
+ * footprint so tall things occlude what stands behind them. */
 
 #define COL_GRASS  0xFF3B5E3B
 #define COL_SAND   0xFFC0A45E
 #define COL_WATER  0xFF2A5E86
 #define COL_ICE    0xFFB9D4DE
 #define COL_BULLET 0xFFFFE066
-#define COL_PLAYER 0xFFEDEFF4
-#define COL_PLAYER_EDGE 0xFF9AA0AC
 #define COL_GUN    0xFF565C68
 #define COL_SHADOW 0xFF14161A
-#define COL_BARREL_RIM 0xFF5C3A17
+
+#define COL_PLAYER_TOP  0xFFEDEFF4
+#define COL_PLAYER_RIM  0xFF9AA0AC
+#define COL_PLAYER_SIDE 0xFFAEB4C4
+#define COL_PLAYER_HI   0xFFC9CDDA
+
+#define COL_BARREL_RIM  0xFF5C3A17
+#define COL_BARREL_SIDE 0xFF6B4420
+#define COL_BARREL_HI   0xFF7F5329
+
+#define PLAYER_H 34 /* cylinder body heights, world px */
+#define BARREL_H 30
+#define BULLET_Z 18 /* bullets fly at waist height above their level */
 
 static const uint32_t TERRAIN_COL[TERRAIN_COUNT] = {
     [TERRAIN_GRASS] = COL_GRASS,
@@ -20,9 +36,10 @@ static const uint32_t TERRAIN_COL[TERRAIN_COUNT] = {
     [TERRAIN_ICE]   = COL_ICE,
 };
 
-/* indexed by wall level 1..3; taller reads lighter (closer to the eye) */
+/* indexed by wall level 1..3: lit top, darker extruded south face */
 static const uint32_t WALL_COL[4]  = {0, 0xFF2E323C, 0xFF3D4351, 0xFF4E5568};
 static const uint32_t WALL_EDGE[4] = {0, 0xFF444A58, 0xFF565E70, 0xFF6A7288};
+static const uint32_t WALL_FACE[4] = {0, 0xFF1C1F26, 0xFF252A34, 0xFF2F3441};
 static const uint32_t WALL_MM[4]   = {0, 0xFF474C59, 0xFF5A6070, 0xFF6E7588};
 
 static const uint32_t BARREL_COL[3] = {0xFF83501F, 0xFF9C5F27, 0xFFB4712F};
@@ -53,6 +70,24 @@ static void fill_circle(uint32_t *pix, int cx, int cy, int r, uint32_t c)
         uint32_t *row = pix + (size_t)y * SCREEN_W;
         for (int x = xa; x < xb; x++)
             row[x] = c;
+    }
+}
+
+static void fill_ring(uint32_t *pix, int cx, int cy, int r, int t, uint32_t c)
+{
+    int ir = r - t;
+    for (int dy = -r; dy <= r; dy++) {
+        int y = cy + dy;
+        if (y < 0 || y >= SCREEN_H) continue;
+        int ohw = (int)sqrtf((float)(r * r - dy * dy));
+        int ihw = (dy > -ir && dy < ir)
+                      ? (int)sqrtf((float)(ir * ir - dy * dy)) : 0;
+        uint32_t *row = pix + (size_t)y * SCREEN_W;
+        for (int x = cx - ohw; x <= cx + ohw; x++) {
+            if (x < 0 || x >= SCREEN_W) continue;
+            if (x > cx - ihw && x < cx + ihw) continue;
+            row[x] = c;
+        }
     }
 }
 
@@ -116,7 +151,7 @@ static void fill_poly(uint32_t *pix, const Poly *p, float scale,
     }
 }
 
-/* stamp small squares along each edge -- outline for wall polys */
+/* stamp small squares along each edge -- outline for polys */
 static void poly_edges(uint32_t *pix, const Poly *p, float offx, float offy,
                        int thick, uint32_t c)
 {
@@ -132,6 +167,21 @@ static void poly_edges(uint32_t *pix, const Poly *p, float offx, float offy,
                       (int)(y1 + dy * t) - thick / 2, thick, thick, c);
         }
     }
+}
+
+static bool poly_contains(const Poly *p, float x, float y)
+{
+    if (x < p->minx || x > p->maxx || y < p->miny || y > p->maxy)
+        return false;
+    bool in = false;
+    for (int i = 0, j = p->n - 1; i < p->n; j = i++) {
+        if ((p->y[i] > y) != (p->y[j] > y)) {
+            float t = (y - p->y[i]) / (p->y[j] - p->y[i]);
+            if (x < p->x[i] + t * (p->x[j] - p->x[i]))
+                in = !in;
+        }
+    }
+    return in;
 }
 
 /* world rect -> screen */
@@ -178,7 +228,6 @@ static void draw_minimap(const Game *g, uint32_t *pix)
     fill_rect(pix, ox - 2, oy - 2, MM_W + 4, mm_h + 4, 0xFF0C0D10);
     for (int i = 0; i < g->nterrain; i++) {
         uint32_t c = TERRAIN_COL[g->terrain[i].type];
-        /* halve brightness so the minimap stays quiet */
         c = 0xFF000000 | ((c >> 1) & 0x007F7F7F);
         fill_poly(pix, &g->terrain[i].p, s, ox, oy, c);
     }
@@ -195,6 +244,128 @@ static void draw_minimap(const Game *g, uint32_t *pix)
                  (int)(SCREEN_W * s), (int)(SCREEN_H * s), 0xFF787E8C);
     fill_rect(pix, ox + (int)(g->px * s) - 2, oy + (int)(g->py * s) - 2,
               4, 4, 0xFFFFFFFF);
+}
+
+/* ------------------------------------------------------- 2.5D drawing */
+
+static void set_bbox(Poly *p)
+{
+    p->minx = p->maxx = p->x[0];
+    p->miny = p->maxy = p->y[0];
+    for (int i = 1; i < p->n; i++) {
+        if (p->x[i] < p->minx) p->minx = p->x[i];
+        if (p->x[i] > p->maxx) p->maxx = p->x[i];
+        if (p->y[i] < p->miny) p->miny = p->y[i];
+        if (p->y[i] > p->maxy) p->maxy = p->y[i];
+    }
+}
+
+static void draw_wall(const Game *g, const Wall *w, uint32_t *pix)
+{
+    float h = w->level * LEVEL_STEP;
+    const Poly *p = &w->p;
+    Poly tmp;
+
+    /* south-facing side faces: extrude camera-facing edges down to the
+     * ground footprint */
+    for (int i = 0, j = p->n - 1; i < p->n; j = i++) {
+        float dx = p->x[i] - p->x[j], dy = p->y[i] - p->y[j];
+        float len = sqrtf(dx * dx + dy * dy);
+        if (len < 0.001f) continue;
+        float nx = dy / len, ny = -dx / len; /* candidate outward normal */
+        float mx = (p->x[i] + p->x[j]) * 0.5f + nx * 1.5f;
+        float my = (p->y[i] + p->y[j]) * 0.5f + ny * 1.5f;
+        if (poly_contains(p, mx, my)) { nx = -nx; ny = -ny; }
+        if (ny <= 0.01f) continue; /* back face or edge-on */
+        tmp.n = 4;
+        tmp.x[0] = p->x[j]; tmp.y[0] = p->y[j];
+        tmp.x[1] = p->x[i]; tmp.y[1] = p->y[i];
+        tmp.x[2] = p->x[i]; tmp.y[2] = p->y[i] - h;
+        tmp.x[3] = p->x[j]; tmp.y[3] = p->y[j] - h;
+        set_bbox(&tmp);
+        fill_poly(pix, &tmp, 1.0f, -g->cam_x, -g->cam_y,
+                  WALL_FACE[w->level]);
+    }
+
+    /* lit top, raised by the wall height */
+    tmp = *p;
+    for (int i = 0; i < tmp.n; i++)
+        tmp.y[i] -= h;
+    tmp.miny -= h;
+    tmp.maxy -= h;
+    fill_poly(pix, &tmp, 1.0f, -g->cam_x, -g->cam_y, WALL_COL[w->level]);
+    poly_edges(pix, &tmp, -g->cam_x, -g->cam_y, 3, WALL_EDGE[w->level]);
+}
+
+/* cylinder standing at screen (cx, base_y): bottom bulge, body, lid */
+static void draw_cylinder(uint32_t *pix, int cx, int base_y, int r, int h,
+                          uint32_t side, uint32_t side_hi,
+                          uint32_t rim, uint32_t lid)
+{
+    fill_circle(pix, cx, base_y, r, side);
+    fill_rect(pix, cx - r, base_y - h, 2 * r + 1, h + 1, side);
+    fill_rect(pix, cx - r + 3, base_y - h + 2, 3, h + r / 2, side_hi);
+    fill_circle(pix, cx, base_y - h, r, rim);
+    fill_circle(pix, cx, base_y - h, r - 3, lid);
+}
+
+static void draw_shadow(uint32_t *pix, int cx, int floor_y, float lift,
+                        int base_r)
+{
+    int r = base_r - (int)(lift * 0.05f);
+    if (r < 6) r = 6;
+    fill_circle(pix, cx, floor_y, r, COL_SHADOW);
+}
+
+static void draw_barrel(const Game *g, const Barrel *b, uint32_t *pix)
+{
+    int cx = (int)(b->x - g->cam_x), gy = (int)(b->y - g->cam_y);
+    int hp = b->hp < 1 ? 1 : (b->hp > 3 ? 3 : b->hp);
+    float floorz = b->level * LEVEL_STEP;
+    draw_shadow(pix, cx, gy - (int)floorz, b->z - floorz, 16);
+    int base = gy - (int)b->z;
+    draw_cylinder(pix, cx, base, (int)BARREL_R, BARREL_H,
+                  COL_BARREL_SIDE, COL_BARREL_HI,
+                  COL_BARREL_RIM, BARREL_COL[hp - 1]);
+    fill_circle(pix, cx, base - BARREL_H, 11, COL_BARREL_RIM);
+    fill_circle(pix, cx, base - BARREL_H, 8, BARREL_COL[hp - 1]);
+}
+
+static void draw_player(const Game *g, uint32_t *pix)
+{
+    int cx = (int)(g->px - g->cam_x), gy = (int)(g->py - g->cam_y);
+    draw_shadow(pix, cx, gy - (int)g->pfloor, g->pz - g->pfloor, 14);
+    int base = gy - (int)g->pz;
+    draw_cylinder(pix, cx, base, (int)PLAYER_R, PLAYER_H,
+                  COL_PLAYER_SIDE, COL_PLAYER_HI,
+                  COL_PLAYER_RIM, COL_PLAYER_TOP);
+    int ty = base - PLAYER_H + 4; /* gun leaves from just below the lid */
+    for (float t = 10; t <= 30; t += 2)
+        fill_circle(pix, cx + (int)(g->aim_x * t),
+                    ty + (int)(g->aim_y * t), 4, COL_GUN);
+}
+
+/* painter key: the southmost ground line of whatever supports the body */
+static float entity_key(const Game *g, float x, float y, float z)
+{
+    float key = y;
+    for (int i = 0; i < g->nwalls; i++) {
+        const Wall *w = &g->walls[i];
+        if (w->level * LEVEL_STEP <= z + 1.0f &&
+            poly_contains(&w->p, x, y) && w->p.maxy + 0.5f > key)
+            key = w->p.maxy + 0.5f;
+    }
+    return key;
+}
+
+enum { IT_WALL, IT_BARREL, IT_BULLET, IT_FRAG, IT_PLAYER };
+
+typedef struct { float key; int kind, idx; } Item;
+
+static int item_cmp(const void *pa, const void *pb)
+{
+    const Item *a = pa, *b = pb;
+    return (a->key > b->key) - (a->key < b->key);
 }
 
 void game_render(const Game *g, uint32_t *pix)
@@ -215,63 +386,92 @@ void game_render(const Game *g, uint32_t *pix)
          gy += GRID)
         darken_rect(pix, 0, (int)(gy - g->cam_y), SCREEN_W, 2);
 
-    /* walls, lowest level first so taller tops overlap */
-    for (int lvl = LEVEL_LOW; lvl <= LEVEL_HIGH; lvl++) {
-        for (int i = 0; i < g->nwalls; i++) {
-            const Wall *w = &g->walls[i];
-            if (w->level != lvl) continue;
-            const Poly *p = &w->p;
-            if (p->maxx < g->cam_x || p->minx > g->cam_x + SCREEN_W ||
-                p->maxy < g->cam_y || p->miny > g->cam_y + SCREEN_H)
-                continue;
-            fill_poly(pix, p, 1.0f, -g->cam_x, -g->cam_y, WALL_COL[lvl]);
-            poly_edges(pix, p, -g->cam_x, -g->cam_y, 3, WALL_EDGE[lvl]);
-        }
+    /* collect visible drawables and painter-sort back to front */
+    static Item items[1 + MAX_WALLS + MAX_BARRELS + MAX_BULLETS +
+                      MAX_FRAGMENTS];
+    int n = 0;
+    for (int i = 0; i < g->nwalls; i++) {
+        const Poly *p = &g->walls[i].p;
+        float h = g->walls[i].level * LEVEL_STEP;
+        if (p->maxx < g->cam_x || p->minx > g->cam_x + SCREEN_W ||
+            p->maxy < g->cam_y || p->miny - h > g->cam_y + SCREEN_H)
+            continue;
+        items[n++] = (Item){p->maxy + 0.001f * g->walls[i].level, IT_WALL, i};
     }
-
-    /* barrels: rim, lid (tinted darker as hp drops), inner ring */
     for (int i = 0; i < g->nbarrels; i++) {
         const Barrel *b = &g->barrels[i];
         if (!b->alive) continue;
-        int x = (int)(b->x - g->cam_x), y = (int)(b->y - g->cam_y);
-        int hp = b->hp < 1 ? 1 : (b->hp > 3 ? 3 : b->hp);
-        fill_circle(pix, x, y, (int)BARREL_R, COL_BARREL_RIM);
-        fill_circle(pix, x, y, (int)BARREL_R - 3, BARREL_COL[hp - 1]);
-        fill_circle(pix, x, y, 11, COL_BARREL_RIM);
-        fill_circle(pix, x, y, 8, BARREL_COL[hp - 1]);
+        items[n++] = (Item){entity_key(g, b->x, b->y, b->z), IT_BARREL, i};
     }
-
-    /* fragments */
-    for (int i = 0; i < MAX_FRAGMENTS; i++) {
-        const Fragment *fr = &g->frags[i];
-        if (!fr->alive) continue;
-        int x, y, w, h;
-        world_rect(g, &fr->r, &x, &y, &w, &h);
-        fill_rect(pix, x, y, w, h, fr->color);
-    }
-
-    /* bullets */
     for (int i = 0; i < MAX_BULLETS; i++) {
         const Bullet *b = &g->bullets[i];
         if (!b->alive) continue;
-        fill_circle(pix, (int)(b->x - g->cam_x), (int)(b->y - g->cam_y),
-                    3, COL_BULLET);
+        items[n++] = (Item){
+            entity_key(g, b->x, b->y, b->level * LEVEL_STEP + BULLET_Z),
+            IT_BULLET, i};
+    }
+    for (int i = 0; i < MAX_FRAGMENTS; i++) {
+        const Fragment *fr = &g->frags[i];
+        if (!fr->alive) continue;
+        items[n++] = (Item){
+            entity_key(g, fr->r.x + fr->r.w / 2, fr->r.y + fr->r.h / 2,
+                       fr->level * LEVEL_STEP),
+            IT_FRAG, i};
+    }
+    float pkey = entity_key(g, g->px, g->py, g->pz);
+    items[n++] = (Item){pkey, IT_PLAYER, 0};
+    qsort(items, n, sizeof(Item), item_cmp);
+
+    for (int it = 0; it < n; it++) {
+        switch (items[it].kind) {
+        case IT_WALL:
+            draw_wall(g, &g->walls[items[it].idx], pix);
+            break;
+        case IT_BARREL:
+            draw_barrel(g, &g->barrels[items[it].idx], pix);
+            break;
+        case IT_BULLET: {
+            const Bullet *b = &g->bullets[items[it].idx];
+            fill_circle(pix, (int)(b->x - g->cam_x),
+                        (int)(b->y - g->cam_y) -
+                            (int)(b->level * LEVEL_STEP + BULLET_Z),
+                        3, COL_BULLET);
+            break;
+        }
+        case IT_FRAG: {
+            const Fragment *fr = &g->frags[items[it].idx];
+            int x, y, w, h;
+            world_rect(g, &fr->r, &x, &y, &w, &h);
+            fill_rect(pix, x, y - (int)(fr->level * LEVEL_STEP), w, h,
+                      fr->color);
+            break;
+        }
+        case IT_PLAYER:
+            draw_player(g, pix);
+            break;
+        }
     }
 
-    /* player: shadow at ground position, body lifted while in the air */
+    /* x-ray ring when a wall drawn after the player covers the body */
     {
-        int cx = (int)(g->px - g->cam_x), cy = (int)(g->py - g->cam_y);
-        float lift = g->pz - g->pfloor; /* height above what's below us */
-        if (lift > 0.5f) {
-            int sr = 12 - (int)(lift * 0.06f);
-            fill_circle(pix, cx, cy, sr < 5 ? 5 : sr, COL_SHADOW);
+        int cx = (int)(g->px - g->cam_x);
+        int by = (int)(g->py - g->cam_y) - (int)g->pz;
+        float bx0 = g->px - PLAYER_R, bx1 = g->px + PLAYER_R;
+        float by0 = g->py - g->pz - PLAYER_H - PLAYER_R;
+        float by1 = g->py - g->pz + PLAYER_R;
+        for (int i = 0; i < g->nwalls; i++) {
+            const Wall *w = &g->walls[i];
+            float wkey = w->p.maxy + 0.001f * w->level;
+            float h = w->level * LEVEL_STEP;
+            if (wkey <= pkey)
+                continue;
+            if (bx1 < w->p.minx || bx0 > w->p.maxx ||
+                by1 < w->p.miny - h || by0 > w->p.maxy)
+                continue;
+            fill_ring(pix, cx, by - PLAYER_H / 2, (int)PLAYER_R + 3, 3,
+                      COL_PLAYER_RIM);
+            break;
         }
-        int by = cy - (int)lift;
-        for (float t = 8; t <= 30; t += 2)
-            fill_circle(pix, cx + (int)(g->aim_x * t),
-                        by + (int)(g->aim_y * t), 4, COL_GUN);
-        fill_circle(pix, cx, by, (int)PLAYER_R, COL_PLAYER_EDGE);
-        fill_circle(pix, cx, by, (int)PLAYER_R - 3, COL_PLAYER);
     }
 
     /* crosshair: dark backing then light cross, with a center gap */

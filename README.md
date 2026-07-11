@@ -1,8 +1,17 @@
 # crateblast
 
-Top-down 2D shooter for Linux/Wayland. No engine, no toolkit, no sprites —
-a raw `wayland-client` connection, software rendering into shared-memory
-buffers, vector shapes all the way down, and a tiny ALSA mixer for sound.
+Top-down 2.5D shooter for Linux/Wayland in the Chaos Engine / Stardew
+Valley mold. No engine, no toolkit, no sprites — a raw `wayland-client`
+connection, software rendering into shared-memory buffers, vector shapes
+all the way down, and a tiny ALSA mixer for sound.
+
+The world draws in an oblique projection: anything at height `z` is drawn
+`z` pixels up-screen. Walls are extruded volumes with lit tops and shaded
+south faces, the player and barrels are cylinders, and everything is
+painter-sorted by its ground footprint, so tall walls occlude what stands
+behind them (a ghost ring marks the player when hidden). Mechanically the
+game is still entirely 2D — heights only exist in the renderer and the
+level rules.
 
 Drive around a 5760x3240 map (3x a 1080p screen in each axis) and blast
 barrels. Barrels take three hits, get knocked around by bullets and by you,
@@ -21,8 +30,9 @@ top-right.
 
 ## Wall heights & jumping
 
-Walls come in three heights — **low**, **medium**, **high** — drawn lighter
-the taller they are. Jumping (SPACE) lets you climb exactly one step:
+Walls come in three heights — **low**, **medium**, **high** — extruded
+taller on screen the higher they are. Jumping (SPACE) lets you climb one
+step:
 ground → low → medium → high. The jump arc tops out below a two-step wall
 face, so jump close to the wall you want to climb; jump too early and you
 smack the face and slide back down. Walking off any edge simply drops you
