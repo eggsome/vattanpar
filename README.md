@@ -71,6 +71,9 @@ Needs `wayland-client` dev headers, `wayland-protocols`, and
     make run
 
 The window is a fixed 1920x1080 buffer (v1 targets 1080p only).
+`make test` runs the headless mechanics suite (jump/fall/slide rules)
+against the frozen geometry in `tests/testmap.txt` — game maps can be
+edited freely without breaking it.
 
 ## Map format
 

@@ -29,10 +29,16 @@ build:
 run: crateblast
 	./crateblast map.txt
 
+test: build/test_heights
+	./build/test_heights tests/testmap.txt
+
+build/test_heights: tests/test_heights.c src/game.c src/game.h | build
+	$(CC) $(CFLAGS) -Isrc -o $@ tests/test_heights.c src/game.c -lm
+
 edit:
 	python3 editor.py map.txt
 
 clean:
 	rm -rf build crateblast
 
-.PHONY: run edit clean
+.PHONY: run edit test clean

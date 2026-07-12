@@ -1,0 +1,18 @@
+# frozen geometry for tests/test_heights.c -- do not balance-edit;
+# the tests depend on these exact coordinates
+size 5760 3240
+spawn 1760 1740
+
+wall high 0 0 5760 40
+wall high 0 3200 5760 40
+wall high 0 40 40 3160
+wall high 5720 40 40 3160
+
+# staircase: low -> medium -> high, with a high rampart running south
+wall low 2700 1850 300 300
+wall medium 3000 1850 300 300
+wall high 3300 1850 300 300
+wall high 3400 1900 60 1000
+
+# 45-degree diagonal band for the slide test
+poly medium 3500 1450 3800 1750 3720 1830 3420 1530
