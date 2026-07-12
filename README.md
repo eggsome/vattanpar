@@ -63,8 +63,9 @@ library or the files are missing the game runs silently.
 - **Water** — slowest
 - **Ice** — fast and very slippery; barrels slide forever on it
 
-Terrain only grips you while you touch it — jump over a sand patch and
-you fly at full speed.
+Terrain only grips you while standing on it at ground level — jump over
+a sand patch and you fly at full speed, and wall tops always behave
+like grass no matter what they were built on.
 
 ## Build & run
 

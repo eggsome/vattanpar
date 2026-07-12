@@ -196,6 +196,16 @@ int main(int argc, char **argv)
            g.pvx, g.pvx < 300.0f ? "ok" : "FAIL");
     if (g.pvx >= 300.0f) fails++;
 
+    /* 13. wall tops behave like grass even above special terrain */
+    place(780, 1100, 1); /* on the low wall inside the sand patch */
+    g.pvx = 400;
+    g.key_d = true;
+    steps(10);
+    printf("%-46s vx=%.0f (want > 300) %s\n", "on wall over sand: full speed",
+           g.pvx, g.pvx > 300.0f ? "ok" : "FAIL");
+    if (g.pvx <= 300.0f) fails++;
+    expect("  still on the wall", g.plevel, 1);
+
     printf(fails ? ">>> %d FAILURES\n" : "all passed\n", fails);
     return fails != 0;
 }

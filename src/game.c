@@ -581,10 +581,11 @@ static void fire_bullet(Game *g)
 
 static void update_player(Game *g, float dt)
 {
-    /* terrain grips you only while you touch it; airborne movement uses
-     * the neutral baseline */
-    TerrainType t = g->airborne ? TERRAIN_GRASS
-                                : terrain_at(g, g->px, g->py);
+    /* terrain grips you only while standing on it at ground level;
+     * airborne and wall tops use the neutral baseline */
+    TerrainType t = (g->airborne || g->plevel > LEVEL_GROUND)
+                        ? TERRAIN_GRASS
+                        : terrain_at(g, g->px, g->py);
     float ix = (g->key_d ? 1.0f : 0.0f) - (g->key_a ? 1.0f : 0.0f);
     float iy = (g->key_s ? 1.0f : 0.0f) - (g->key_w ? 1.0f : 0.0f);
     if (ix != 0 && iy != 0) { ix *= 0.70710678f; iy *= 0.70710678f; }
@@ -666,7 +667,9 @@ static void update_barrels(Game *g, float dt)
     for (int i = 0; i < g->nbarrels; i++) {
         Barrel *b = &g->barrels[i];
         if (!b->alive) continue;
-        TerrainType t = terrain_at(g, b->x, b->y);
+        TerrainType t = b->level > LEVEL_GROUND
+                            ? TERRAIN_GRASS
+                            : terrain_at(g, b->x, b->y);
         float drag = expf(-TPHYS[t].obj_drag * dt);
         b->vx *= drag;
         b->vy *= drag;
