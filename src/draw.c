@@ -36,11 +36,14 @@ static const uint32_t TERRAIN_COL[TERRAIN_COUNT] = {
     [TERRAIN_ICE]   = COL_ICE,
 };
 
-/* indexed by wall level 1..3: lit top, darker extruded south face */
-static const uint32_t WALL_COL[4]  = {0, 0xFF2E323C, 0xFF3D4351, 0xFF4E5568};
-static const uint32_t WALL_EDGE[4] = {0, 0xFF444A58, 0xFF565E70, 0xFF6A7288};
-static const uint32_t WALL_FACE[4] = {0, 0xFF1C1F26, 0xFF252A34, 0xFF2F3441};
-static const uint32_t WALL_MM[4]   = {0, 0xFF474C59, 0xFF5A6070, 0xFF6E7588};
+/* indexed by wall level 1..3: lit top, darker extruded south face.
+ * The steps between levels are deliberately wide so the three heights
+ * read at a glance. */
+static const uint32_t WALL_COL[4]  = {0, 0xFF282C34, 0xFF414857, 0xFF5D667B};
+static const uint32_t WALL_EDGE[4] = {0, 0xFF3E4450, 0xFF5A6274, 0xFF7C86A0};
+static const uint32_t WALL_FACE[4] = {0, 0xFF1A1D23, 0xFF262B36, 0xFF333A49};
+static const uint32_t WALL_MM[4]   = {0, 0xFF3F444E, 0xFF565E70, 0xFF7A8299};
+#define COL_SEAM 0xFF12151B /* storey seams and ground contact lines */
 
 static const uint32_t BARREL_COL[3] = {0xFF83501F, 0xFF9C5F27, 0xFFB4712F};
 
@@ -151,22 +154,27 @@ static void fill_poly(uint32_t *pix, const Poly *p, float scale,
     }
 }
 
-/* stamp small squares along each edge -- outline for polys */
+/* stamp small squares along a line */
+static void stamp_line(uint32_t *pix, float x1, float y1, float x2, float y2,
+                       int thick, uint32_t c)
+{
+    float dx = x2 - x1, dy = y2 - y1;
+    float len = sqrtf(dx * dx + dy * dy);
+    int steps = (int)(len / (thick * 0.5f)) + 1;
+    for (int s = 0; s <= steps; s++) {
+        float t = (float)s / steps;
+        fill_rect(pix, (int)(x1 + dx * t) - thick / 2,
+                  (int)(y1 + dy * t) - thick / 2, thick, thick, c);
+    }
+}
+
+/* outline for polys */
 static void poly_edges(uint32_t *pix, const Poly *p, float offx, float offy,
                        int thick, uint32_t c)
 {
-    for (int i = 0, j = p->n - 1; i < p->n; j = i++) {
-        float x1 = p->x[j] + offx, y1 = p->y[j] + offy;
-        float x2 = p->x[i] + offx, y2 = p->y[i] + offy;
-        float dx = x2 - x1, dy = y2 - y1;
-        float len = sqrtf(dx * dx + dy * dy);
-        int steps = (int)(len / (thick * 0.5f)) + 1;
-        for (int s = 0; s <= steps; s++) {
-            float t = (float)s / steps;
-            fill_rect(pix, (int)(x1 + dx * t) - thick / 2,
-                      (int)(y1 + dy * t) - thick / 2, thick, thick, c);
-        }
-    }
+    for (int i = 0, j = p->n - 1; i < p->n; j = i++)
+        stamp_line(pix, p->x[j] + offx, p->y[j] + offy,
+                   p->x[i] + offx, p->y[i] + offy, thick, c);
 }
 
 static bool poly_contains(const Poly *p, float x, float y)
@@ -182,6 +190,64 @@ static bool poly_contains(const Poly *p, float x, float y)
         }
     }
     return in;
+}
+
+/* multiply-darken inside a screen-space poly -- used for cast shadows */
+static void darken_poly(uint32_t *pix, const Poly *p, float offx, float offy)
+{
+    int y0 = (int)floorf(p->miny + offy);
+    int y1 = (int)ceilf(p->maxy + offy);
+    if (y0 < 0) y0 = 0;
+    if (y1 > SCREEN_H) y1 = SCREEN_H;
+    for (int y = y0; y < y1; y++) {
+        float fy = y + 0.5f;
+        float xs[MAX_POLY_PTS];
+        int nxs = 0;
+        for (int i = 0, j = p->n - 1; i < p->n; j = i++) {
+            float yi = p->y[i] + offy, yj = p->y[j] + offy;
+            if ((yi > fy) == (yj > fy)) continue;
+            float t = (fy - yi) / (yj - yi);
+            xs[nxs++] = p->x[i] + offx + t * (p->x[j] - p->x[i]);
+        }
+        for (int i = 1; i < nxs; i++) {
+            float v = xs[i];
+            int k = i - 1;
+            while (k >= 0 && xs[k] > v) { xs[k + 1] = xs[k]; k--; }
+            xs[k + 1] = v;
+        }
+        for (int i = 0; i + 1 < nxs; i += 2) {
+            int xa = (int)floorf(xs[i] + 0.5f);
+            int xb = (int)floorf(xs[i + 1] + 0.5f);
+            if (xa < 0) xa = 0;
+            if (xb > SCREEN_W) xb = SCREEN_W;
+            uint32_t *row = pix + (size_t)y * SCREEN_W;
+            for (int x = xa; x < xb; x++)
+                row[x] -= (row[x] >> 2) & 0x003F3F3F;
+        }
+    }
+}
+
+/* outward normal of edge j->i; false for degenerate edges */
+static bool edge_normal(const Poly *p, int j, int i, float *nx, float *ny)
+{
+    float dx = p->x[i] - p->x[j], dy = p->y[i] - p->y[j];
+    float len = sqrtf(dx * dx + dy * dy);
+    if (len < 0.001f)
+        return false;
+    *nx = dy / len;
+    *ny = -dx / len;
+    float mx = (p->x[i] + p->x[j]) * 0.5f + *nx * 1.5f;
+    float my = (p->y[i] + p->y[j]) * 0.5f + *ny * 1.5f;
+    if (poly_contains(p, mx, my)) { *nx = -*nx; *ny = -*ny; }
+    return true;
+}
+
+/* multiply-darken n steps, ~12.5% each -- storey shading on tall faces */
+static uint32_t shade_down(uint32_t c, int n)
+{
+    while (n-- > 0)
+        c -= (c >> 3) & 0x001F1F1F;
+    return c;
 }
 
 /* world rect -> screen */
@@ -266,25 +332,30 @@ static void draw_wall(const Game *g, const Wall *w, uint32_t *pix)
     const Poly *p = &w->p;
     Poly tmp;
 
-    /* south-facing side faces: extrude camera-facing edges down to the
-     * ground footprint */
+    /* south-facing side faces, extruded one storey band per level so the
+     * height is countable; bands darken toward the ground */
     for (int i = 0, j = p->n - 1; i < p->n; j = i++) {
-        float dx = p->x[i] - p->x[j], dy = p->y[i] - p->y[j];
-        float len = sqrtf(dx * dx + dy * dy);
-        if (len < 0.001f) continue;
-        float nx = dy / len, ny = -dx / len; /* candidate outward normal */
-        float mx = (p->x[i] + p->x[j]) * 0.5f + nx * 1.5f;
-        float my = (p->y[i] + p->y[j]) * 0.5f + ny * 1.5f;
-        if (poly_contains(p, mx, my)) { nx = -nx; ny = -ny; }
-        if (ny <= 0.01f) continue; /* back face or edge-on */
-        tmp.n = 4;
-        tmp.x[0] = p->x[j]; tmp.y[0] = p->y[j];
-        tmp.x[1] = p->x[i]; tmp.y[1] = p->y[i];
-        tmp.x[2] = p->x[i]; tmp.y[2] = p->y[i] - h;
-        tmp.x[3] = p->x[j]; tmp.y[3] = p->y[j] - h;
-        set_bbox(&tmp);
-        fill_poly(pix, &tmp, 1.0f, -g->cam_x, -g->cam_y,
-                  WALL_FACE[w->level]);
+        float nx, ny;
+        if (!edge_normal(p, j, i, &nx, &ny) || ny <= 0.01f)
+            continue; /* back face or edge-on */
+        for (int s = 0; s < w->level; s++) {
+            float bot = s * LEVEL_STEP, top = bot + LEVEL_STEP;
+            tmp.n = 4;
+            tmp.x[0] = p->x[j]; tmp.y[0] = p->y[j] - bot;
+            tmp.x[1] = p->x[i]; tmp.y[1] = p->y[i] - bot;
+            tmp.x[2] = p->x[i]; tmp.y[2] = p->y[i] - top;
+            tmp.x[3] = p->x[j]; tmp.y[3] = p->y[j] - top;
+            set_bbox(&tmp);
+            fill_poly(pix, &tmp, 1.0f, -g->cam_x, -g->cam_y,
+                      shade_down(WALL_FACE[w->level], w->level - 1 - s));
+            if (s < w->level - 1) /* seam between storeys */
+                stamp_line(pix, p->x[j] - g->cam_x, p->y[j] - top - g->cam_y,
+                           p->x[i] - g->cam_x, p->y[i] - top - g->cam_y,
+                           2, COL_SEAM);
+        }
+        /* contact line where the face meets the ground */
+        stamp_line(pix, p->x[j] - g->cam_x, p->y[j] - g->cam_y,
+                   p->x[i] - g->cam_x, p->y[i] - g->cam_y, 2, COL_SEAM);
     }
 
     /* lit top, raised by the wall height */
@@ -408,6 +479,34 @@ void game_render(const Game *g, uint32_t *pix)
     for (float gy = floorf(g->cam_y / GRID) * GRID; gy < g->cam_y + SCREEN_H;
          gy += GRID)
         darken_rect(pix, 0, (int)(gy - g->cam_y), SCREEN_W, 2);
+
+    /* walls cast SE ground shadows, longer the taller the wall; the
+     * quads from adjacent edges share the same offset so they tile
+     * without double-darkening */
+    for (int i = 0; i < g->nwalls; i++) {
+        const Wall *w = &g->walls[i];
+        float h = w->level * LEVEL_STEP;
+        float ox = h * 0.25f, oy = h * 0.45f;
+        const Poly *p = &w->p;
+        if (p->maxx + ox < g->cam_x || p->minx > g->cam_x + SCREEN_W ||
+            p->maxy + oy < g->cam_y || p->miny > g->cam_y + SCREEN_H)
+            continue;
+        for (int a = 0, b = p->n - 1; a < p->n; b = a++) {
+            float nx, ny;
+            if (!edge_normal(p, b, a, &nx, &ny))
+                continue;
+            if (nx * ox + ny * oy <= 0.01f)
+                continue; /* faces toward the light: casts no shadow */
+            Poly q;
+            q.n = 4;
+            q.x[0] = p->x[b];      q.y[0] = p->y[b];
+            q.x[1] = p->x[a];      q.y[1] = p->y[a];
+            q.x[2] = p->x[a] + ox; q.y[2] = p->y[a] + oy;
+            q.x[3] = p->x[b] + ox; q.y[3] = p->y[b] + oy;
+            set_bbox(&q);
+            darken_poly(pix, &q, -g->cam_x, -g->cam_y);
+        }
+    }
 
     /* collect visible drawables and painter-sort back to front */
     static Item items[1 + MAX_WALLS + MAX_BARRELS + MAX_BULLETS +
