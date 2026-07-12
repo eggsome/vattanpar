@@ -85,6 +85,7 @@ typedef struct {
     /* input, written by the wayland layer */
     bool key_w, key_a, key_s, key_d, key_space;
     bool space_latch;        /* jump is edge-triggered */
+    float jump_buffer;       /* seconds left to honor a buffered press */
     bool mouse_down;
     float cursor_x, cursor_y; /* surface-local pixels */
 

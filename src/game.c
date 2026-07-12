@@ -6,6 +6,7 @@
 
 #define JUMP_V   560.0f  /* apex ~90 px, airtime ~0.64 s */
 #define GRAVITY 1750.0f
+#define JUMP_BUFFER 0.10f /* mid-air presses this close to landing jump */
 
 /* per-terrain feel: player acceleration, player top speed, player drag,
  * and drag applied to loose objects (barrels/fragments) resting on it */
@@ -598,15 +599,20 @@ static void update_player(Game *g, float dt)
         g->pvy *= TPHYS[t].maxspd / spd;
     }
 
-    /* jump: edge-triggered, only while standing */
-    if (g->key_space && !g->space_latch && !g->airborne) {
+    /* jump: edge-triggered; a mid-air press is buffered briefly so
+     * pressing just before touchdown still jumps on landing */
+    g->jump_buffer -= dt;
+    if (g->key_space && !g->space_latch)
+        g->jump_buffer = JUMP_BUFFER;
+    g->space_latch = g->key_space;
+    if (!g->airborne && g->jump_buffer > 0) {
+        g->jump_buffer = 0;
         g->airborne = true;
         g->pvz = JUMP_V;
         g->fall_from = g->plevel;
         g->fall_jumped = true;
         g->ev_jump = true;
     }
-    g->space_latch = g->key_space;
 
     move_player(g, dt);
 
