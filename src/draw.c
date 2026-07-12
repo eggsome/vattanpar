@@ -345,14 +345,37 @@ static void draw_player(const Game *g, uint32_t *pix)
                     ty + (int)(g->aim_y * t), 4, COL_GUN);
 }
 
-/* painter key: the southmost ground line of whatever supports the body */
+/* does a disc of radius r touch the polygon? (matches game.c support) */
+static bool poly_touches_disc(const Poly *p, float cx, float cy, float r)
+{
+    if (cx < p->minx - r || cx > p->maxx + r ||
+        cy < p->miny - r || cy > p->maxy + r)
+        return false;
+    if (poly_contains(p, cx, cy))
+        return true;
+    for (int i = 0, j = p->n - 1; i < p->n; j = i++) {
+        float ax = p->x[j], ay = p->y[j], bx = p->x[i], by = p->y[i];
+        float dx = bx - ax, dy = by - ay;
+        float len2 = dx * dx + dy * dy;
+        float t = len2 > 0 ? ((cx - ax) * dx + (cy - ay) * dy) / len2 : 0;
+        if (t < 0) t = 0;
+        if (t > 1) t = 1;
+        float qx = ax + t * dx - cx, qy = ay + t * dy - cy;
+        if (qx * qx + qy * qy <= r * r)
+            return true;
+    }
+    return false;
+}
+
+/* painter key: the southmost ground line of whatever supports the body;
+ * a disc test so bodies overhanging an edge still sort onto their wall */
 static float entity_key(const Game *g, float x, float y, float z)
 {
     float key = y;
     for (int i = 0; i < g->nwalls; i++) {
         const Wall *w = &g->walls[i];
         if (w->level * LEVEL_STEP <= z + 1.0f &&
-            poly_contains(&w->p, x, y) && w->p.maxy + 0.5f > key)
+            poly_touches_disc(&w->p, x, y, 10.0f) && w->p.maxy + 0.5f > key)
             key = w->p.maxy + 0.5f;
     }
     return key;

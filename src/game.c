@@ -138,15 +138,38 @@ static int level_at(const Game *g, float x, float y)
     return lvl;
 }
 
-/* a circle body at `level` is blocked by any taller wall; there are no
- * edge fences -- walking off a wall just drops you onto what's below */
-static bool circle_blocked(const Game *g, float x, float y, float r, int level)
+/* Bodies keep standing while a small support disc still touches their
+ * wall, so you can overhang an edge before dropping -- and the drop
+ * then starts with the body only slightly overlapping the wall, which
+ * push_out() resolves in a frame or two. */
+#define SUPPORT_R 8.0f
+
+/* highest wall top a support disc at (x,y) rests on; 0 = ground */
+static int floor_level_at(const Game *g, float x, float y, float sr)
+{
+    int lvl = LEVEL_GROUND;
+    for (int i = 0; i < g->nwalls; i++)
+        if (g->walls[i].level > lvl &&
+            poly_hits_circle(&g->walls[i].p, x, y, sr))
+            lvl = g->walls[i].level;
+    return lvl;
+}
+
+/* a circle body with feet at `feet` height is blocked by taller walls;
+ * there are no edge fences -- walking off just drops you onto what's
+ * below */
+static bool feet_blocked(const Game *g, float x, float y, float r, float feet)
 {
     for (int i = 0; i < g->nwalls; i++)
-        if (g->walls[i].level > level &&
+        if (g->walls[i].level * LEVEL_STEP > feet &&
             poly_hits_circle(&g->walls[i].p, x, y, r))
             return true;
     return false;
+}
+
+static bool circle_blocked(const Game *g, float x, float y, float r, int level)
+{
+    return feet_blocked(g, x, y, r, level * LEVEL_STEP + 1.0f);
 }
 
 /* the player's feet height decides which wall faces are solid; airborne
@@ -159,21 +182,17 @@ static float player_feet(const Game *g)
 
 static bool player_blocked(const Game *g, float x, float y)
 {
-    float feet = player_feet(g);
-    for (int i = 0; i < g->nwalls; i++)
-        if (g->walls[i].level * LEVEL_STEP > feet &&
-            poly_hits_circle(&g->walls[i].p, x, y, PLAYER_R))
-            return true;
-    return false;
+    return feet_blocked(g, x, y, PLAYER_R, player_feet(g));
 }
 
-/* outward normal at the nearest blocking wall edge, for sliding */
-static bool contact_normal(const Game *g, float x, float y,
-                           float *nx, float *ny)
+/* outward normal at the nearest blocking wall edge, for sliding and
+ * depenetration; works from inside the wall too (normal is flipped) */
+static bool contact_normal_at(const Game *g, float x, float y, float feet,
+                              float r, float *nx, float *ny)
 {
-    float feet = player_feet(g);
     float best = 1e30f, bqx = 0, bqy = 0;
-    float reach = PLAYER_R + 4.0f;
+    const Poly *bestp = NULL;
+    float reach = r + 6.0f;
     for (int i = 0; i < g->nwalls; i++) {
         const Poly *p = &g->walls[i].p;
         if (g->walls[i].level * LEVEL_STEP <= feet)
@@ -185,15 +204,36 @@ static bool contact_normal(const Game *g, float x, float y,
             float qx, qy;
             float d2 = seg_closest(x, y, p->x[a], p->y[a], p->x[b], p->y[b],
                                    &qx, &qy);
-            if (d2 < best) { best = d2; bqx = qx; bqy = qy; }
+            if (d2 < best) { best = d2; bqx = qx; bqy = qy; bestp = p; }
         }
     }
-    if (best >= reach * reach || best < 0.0001f)
+    if (!bestp || best >= reach * reach)
         return false;
     float d = sqrtf(best);
+    if (d < 0.001f) { *nx = 0; *ny = 1; return true; }
     *nx = (x - bqx) / d;
     *ny = (y - bqy) / d;
+    if (poly_contains(bestp, x, y)) { /* inside: closest edge is the exit */
+        *nx = -*nx;
+        *ny = -*ny;
+    }
     return true;
+}
+
+/* nudge an overlapping body out along the nearest wall normal; returns
+ * false if the overlap is too deep to resolve */
+static bool push_out(const Game *g, float *x, float *y, float r, float feet)
+{
+    for (int i = 0; i < 16; i++) {
+        if (!feet_blocked(g, *x, *y, r, feet))
+            return true;
+        float nx, ny;
+        if (!contact_normal_at(g, *x, *y, feet, r, &nx, &ny))
+            return false;
+        *x += nx * 2.0f;
+        *y += ny * 2.0f;
+    }
+    return !feet_blocked(g, *x, *y, r, feet);
 }
 
 /* bullets fly at the shooter's level and clear anything at or below it */
@@ -391,6 +431,8 @@ static void move_circle_axis(const Game *g, float *cx, float *cy, bool xaxis,
 static void move_circle(const Game *g, float *x, float *y, float *vx,
                         float *vy, float dt, float rest, float r, int level)
 {
+    if (circle_blocked(g, *x, *y, r, level)) /* e.g. just dropped a level */
+        push_out(g, x, y, r, level * LEVEL_STEP + 1.0f);
     move_circle_axis(g, x, y, true, vx, dt, rest, r, level);
     if (*x < r) { *x = r; *vx *= -rest; }
     if (*x > g->map_w - r) { *x = g->map_w - r; *vx *= -rest; }
@@ -406,7 +448,9 @@ static void move_circle(const Game *g, float *x, float *y, float *vx,
  * most of your speed. */
 static void move_player(Game *g, float dt)
 {
-    if (player_blocked(g, g->px, g->py)) { /* stuck escape: move freely */
+    if (player_blocked(g, g->px, g->py) &&
+        !push_out(g, &g->px, &g->py, PLAYER_R, player_feet(g))) {
+        /* unresolvably deep overlap: move freely to escape */
         g->px += g->pvx * dt;
         g->py += g->pvy * dt;
     } else {
@@ -432,7 +476,8 @@ static void move_player(Game *g, float dt)
             g->py += dy * lo;
             frac *= 1.0f - lo;
             float nx, ny;
-            if (!contact_normal(g, g->px, g->py, &nx, &ny)) {
+            if (!contact_normal_at(g, g->px, g->py, player_feet(g),
+                                   PLAYER_R, &nx, &ny)) {
                 g->pvx = g->pvy = 0;
                 break;
             }
@@ -566,33 +611,33 @@ static void update_player(Game *g, float dt)
     move_player(g, dt);
 
     if (!g->airborne) {
-        int lvl = level_at(g, g->px, g->py);
-        if (lvl < g->plevel) { /* walked off an edge: start falling */
+        /* the level only ever goes UP through a jump landing; while
+         * standing we just check whether the support disc lost its wall */
+        if (floor_level_at(g, g->px, g->py, SUPPORT_R) < g->plevel) {
             g->airborne = true;
             g->pvz = 0;
             g->fall_from = g->plevel;
             g->fall_jumped = false;
         } else {
-            g->plevel = lvl;
-            g->pz = lvl * LEVEL_STEP;
+            g->pz = g->plevel * LEVEL_STEP;
         }
     }
     if (g->airborne) {
         g->pz += g->pvz * dt;
         g->pvz -= GRAVITY * dt;
-        float floor = level_at(g, g->px, g->py) * LEVEL_STEP;
-        if (g->pvz <= 0 && g->pz <= floor) {
-            g->pz = floor;
+        int flvl = floor_level_at(g, g->px, g->py, SUPPORT_R);
+        if (g->pvz <= 0 && g->pz <= flvl * LEVEL_STEP) {
+            g->pz = flvl * LEVEL_STEP;
             g->pvz = 0;
             g->airborne = false;
-            g->plevel = level_at(g, g->px, g->py);
+            g->plevel = flvl;
             /* jumping adds one level to the height fallen from */
             int fell = g->fall_from + (g->fall_jumped ? 1 : 0) - g->plevel;
             if (fell > 1)
                 g->ev_fall = true;
         }
     }
-    g->pfloor = level_at(g, g->px, g->py) * LEVEL_STEP;
+    g->pfloor = floor_level_at(g, g->px, g->py, SUPPORT_R) * LEVEL_STEP;
 
     /* aim toward cursor (cursor is screen-local; camera converts to world) */
     float wx = g->cam_x + g->cursor_x, wy = g->cam_y + g->cursor_y;
@@ -618,7 +663,7 @@ static void update_barrels(Game *g, float dt)
         b->vy *= drag;
         move_circle(g, &b->x, &b->y, &b->vx, &b->vy, dt, 0.55f,
                     BARREL_R, b->level);
-        int lvl = level_at(g, b->x, b->y);
+        int lvl = floor_level_at(g, b->x, b->y, 10.0f);
         if (lvl < b->level)
             b->level = lvl; /* rolled off an edge */
         float floorz = b->level * LEVEL_STEP;
