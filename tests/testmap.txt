@@ -16,3 +16,6 @@ wall high 3400 1900 60 1000
 
 # 45-degree diagonal band for the slide test
 poly medium 3500 1450 3800 1750 3720 1830 3420 1530
+
+# sand patch for the airborne-terrain test
+terrain sand 600 900 800 600

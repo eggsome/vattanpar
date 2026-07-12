@@ -63,6 +63,9 @@ library or the files are missing the game runs silently.
 - **Water** — slowest
 - **Ice** — fast and very slippery; barrels slide forever on it
 
+Terrain only grips you while you touch it — jump over a sand patch and
+you fly at full speed.
+
 ## Build & run
 
 Needs `wayland-client` dev headers, `wayland-protocols`, and

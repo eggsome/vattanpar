@@ -175,6 +175,27 @@ int main(int argc, char **argv)
     steps(40);
     expect("too-early press does not jump", g.airborne, 0);
 
+    /* 12. terrain only grips you on the ground: airborne over sand you
+     * keep grass-level speed; standing in it you're slowed and capped */
+    place(1000, 1200, 0); /* over the sand patch */
+    g.airborne = true;
+    g.pz = 30;
+    g.pvz = 400;
+    g.pvx = 400;
+    g.key_d = true;
+    steps(10);
+    printf("%-46s vx=%.0f (want > 300) %s\n", "airborne over sand: full speed",
+           g.pvx, g.pvx > 300.0f ? "ok" : "FAIL");
+    if (g.pvx <= 300.0f) fails++;
+
+    place(1000, 1200, 0);
+    g.pvx = 400;
+    g.key_d = true;
+    steps(10);
+    printf("%-46s vx=%.0f (want < 300) %s\n", "grounded in sand: slowed",
+           g.pvx, g.pvx < 300.0f ? "ok" : "FAIL");
+    if (g.pvx >= 300.0f) fails++;
+
     printf(fails ? ">>> %d FAILURES\n" : "all passed\n", fails);
     return fails != 0;
 }
